@@ -24,15 +24,15 @@ class Source(Base):
         self.min_pattern_length = 1
         self.rank = 500
         self.filetypes = ['dart']
-        self.on_event = 0
+        self.use_on_event = 1
         self._server = None
 
     def on_init(self, context):
         """
         Set up analysis server
         """
-        self.on_event = context['vars'].get(
-            'deoplete#sources#dart#on_event', 0)
+        self.use_on_event = context['vars'].get(
+            'deoplete#sources#dart#use_on_event', 1)
 
         dart_sdk_path = context['vars'].get(
             'deoplete#sources#dart#dart_sdk_path', '')
@@ -50,6 +50,27 @@ class Source(Base):
         """
         Request completions from analysis_server backend
         """
+        self._server.add_analysis_roots([context['current'].name])
+        suggestions = self._server.get_suggestions(
+            context['current'].name, context['input'])
+
+        candidates = []
+        for suggest in suggestions:
+            candidate = dict(word=suggest['completion'],
+                             kind=suggest['kind'],
+                             info=suggest['docSummary'],
+                             dup=1)
+
+            candidates.append(candidate)
+
+        return candidates
+
+    def on_event(self, context):
+        """
+        Make sure files are in the analyzer
+        """
+        if self.use_on_event == 1:
+            self._server.add_analysis_roots([context['current'].name])
         return
 
 
@@ -66,6 +87,8 @@ class AnalysisService(object):
                                          stdout=subprocess.PIPE)
         self._request_id = 0
         self._lock = threading.RLock()
+        self._roots = []
+        self._priority_files = []
 
     def kill(self):
         """
@@ -110,6 +133,28 @@ class AnalysisService(object):
                         return response['result']
                     else:
                         return None
+
+    def add_analysis_roots(self, filenames):
+        """
+        Add files to be analyzed
+        """
+        for filename in filenames:
+            directory = os.path.dirname(filename)
+            while (not os.path.exists(os.path.join(directory, 'pubspec.yaml'))
+                   and directory != '' and directory != '/'):
+                directory = os.path.dirname(directory)
+
+            if directory == '' or directory == '/':
+                directory = os.path.dirname(filename)
+
+            if directory not in self._roots:
+                self._roots.append(directory)
+
+            if filename not in self._priority_files:
+                self._priority_files.append(filename)
+
+        self.set_analysis_roots(self._roots, [], {})
+        self.set_priority_files(self._priority_files)
 
     def set_analysis_roots(self, included, excluded, package_roots):
         """
