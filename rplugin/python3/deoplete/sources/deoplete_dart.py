@@ -2,13 +2,13 @@
 deoplete.vim completion for Dart using analysis_server
 """
 
-import os.path
 import json
+import os.path
 import subprocess
 import threading
 
 from .base import Base
-from deoplete.util import error
+from deoplete.util import charpos2bytepos, error
 
 
 class Source(Base):
@@ -34,31 +34,46 @@ class Source(Base):
         self.use_on_event = context['vars'].get(
             'deoplete#sources#dart#use_on_event', 1)
 
+        #Dart paths
         dart_sdk_path = context['vars'].get(
             'deoplete#sources#dart#dart_sdk_path', '')
         dart_bin_dir = os.path.join(dart_sdk_path, 'bin')
-        dart_bin = self.find_dart_binary(dart_bin_dir, 'dart')
+        dart_bin = os.path.join(dart_bin_dir, 'dart')
         dart_analysis_server = os.path.join(
             dart_bin_dir, 'snapshots', 'analysis_server.dart.snapshot')
+
         flags_string = context['vars'].get(
             'deoplete#sources#dart#dart_analysis_server_flags', ''
         )
+
         self._server = AnalysisService(
-            dart_bin, dart_analysis_server, flags_string)
+            dart_bin, dart_analysis_server, flags_string + 
+            ' --sdk ' + dart_sdk_path + ' --no-error-notification')
 
     def gather_candidates(self, context):
         """
         Request completions from analysis_server backend
         """
-        self._server.add_analysis_roots([context['current'].name])
+        current_file = os.path.join(context['cwd'], context['bufname'])
+        #self._server.add_analysis_roots([current_file])
+
+        line = self.vim.current.window.cursor[0]
+        column = context['complete_position']
+        offset = self.vim.call('line2byte', line) + \
+            charpos2bytepos('utf-8', context['input'][: column],
+                            column) - 1
         suggestions = self._server.get_suggestions(
-            context['current'].name, context['input'])
+            current_file, offset)
 
         candidates = []
         for suggest in suggestions:
+            doc_summary = ''
+            if 'docSummary' in suggest:
+                doc_summary = suggest['docSummary']
+
             candidate = dict(word=suggest['completion'],
                              kind=suggest['kind'],
-                             info=suggest['docSummary'],
+                             info=doc_summary,
                              dup=1)
 
             candidates.append(candidate)
@@ -69,8 +84,9 @@ class Source(Base):
         """
         Make sure files are in the analyzer
         """
+        current_file = os.path.join(context['cwd'], context['bufname'])
         if self.use_on_event == 1:
-            self._server.add_analysis_roots([context['current'].name])
+            self._server.add_analysis_roots([current_file])
         return
 
 
@@ -82,13 +98,22 @@ class AnalysisService(object):
     def __init__(self, dart_bin, analysis_server_path, flags_string):
         flags = [] if not flags_string else flags_string.split(' ')
         cmd = [dart_bin, analysis_server_path] + flags
-        self._process = subprocess.Popen(cmd,
-                                         stdin=subprocess.PIPE,
-                                         stdout=subprocess.PIPE)
         self._request_id = 0
         self._lock = threading.RLock()
         self._roots = []
         self._priority_files = []
+        self._process = subprocess.Popen(cmd,
+                                         stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE,
+                                         universal_newlines=True)
+
+        while True:
+            line = self._process.stdout.readline()
+            response = json.loads(line)
+            if ('event' in response) and (response['event'] == 'server.connected'):
+                return
+            if 'error' in response:
+                raise Exception(response['error'])
 
     def kill(self):
         """
@@ -120,8 +145,8 @@ class AnalysisService(object):
         with self._lock:
             request_id = self.__get_next_request_id()
             request = {'id': request_id, 'method': method, 'params': params}
-            self._process.stdin.write(json.dumps(request))
-            self._process.stdin.write('\n')
+            json_req = json.dumps(request) + '\n'
+            self._process.stdin.write(json_req)
             self._process.stdin.flush()
             while True:
                 line = self._process.stdout.readline()
@@ -237,7 +262,6 @@ class AnalysisService(object):
         response could be sent, then an error of type CONTENT_MODIFIED will be
         generated.
         """
-
         return self.__send_request(
             'analysis.getNavigation',
             {
