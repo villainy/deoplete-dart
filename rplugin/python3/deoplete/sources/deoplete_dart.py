@@ -59,7 +59,13 @@ class Source(Base):
         Request completions from analysis_server backend
         """
         current_file = os.path.join(context['cwd'], context['bufname'])
-        # self._server.add_analysis_roots([current_file])
+
+        # Check if we're analyzed yet. If yes then update buffer in analysis
+        # server, otherwise add for analysis
+        if self._server.is_analyzed(current_file):
+            self._server.update_file_content(current_file, '\n'.join(self.vim.current.buffer[:]))
+        else:
+            self._server.add_analysis_roots([current_file])
 
         # Need a better way to get the offset
         line = self.vim.current.window.cursor[0]
