@@ -34,7 +34,7 @@ class Source(Base):
         self.use_on_event = context['vars'].get(
             'deoplete#sources#dart#use_on_event', 1)
 
-        #Dart paths
+        # Dart paths
         dart_sdk_path = context['vars'].get(
             'deoplete#sources#dart#dart_sdk_path', '')
         dart_bin_dir = os.path.join(dart_sdk_path, 'bin')
@@ -47,16 +47,21 @@ class Source(Base):
         )
 
         self._server = AnalysisService(
-            dart_bin, dart_analysis_server, flags_string + 
+            dart_bin, dart_analysis_server, flags_string +
             ' --sdk ' + dart_sdk_path + ' --no-error-notification')
+
+        current_file = os.path.join(context['cwd'], context['bufname'])
+        if self.use_on_event and context['event'] == 'BufRead':
+            self._server.add_analysis_roots([current_file])
 
     def gather_candidates(self, context):
         """
         Request completions from analysis_server backend
         """
         current_file = os.path.join(context['cwd'], context['bufname'])
-        #self._server.add_analysis_roots([current_file])
+        # self._server.add_analysis_roots([current_file])
 
+        # Need a better way to get the offset
         line = self.vim.current.window.cursor[0]
         column = context['complete_position']
         offset = self.vim.call('line2byte', line) + \
@@ -70,9 +75,14 @@ class Source(Base):
             doc_summary = ''
             if 'docSummary' in suggest:
                 doc_summary = suggest['docSummary']
+            kind = ''
+            if 'element' in suggest and 'kind' in suggest['element']:
+                kind = suggest['element']['kind']
+            elif 'kind' in suggest:
+                kind = suggest['kind']
 
             candidate = dict(word=suggest['completion'],
-                             kind=suggest['kind'],
+                             kind=kind,
                              info=doc_summary,
                              dup=1)
 
@@ -85,7 +95,9 @@ class Source(Base):
         Make sure files are in the analyzer
         """
         current_file = os.path.join(context['cwd'], context['bufname'])
-        if self.use_on_event == 1:
+        if self._server.is_analyzed(current_file):
+            self._server.reanalyze(current_file)
+        else:
             self._server.add_analysis_roots([current_file])
         return
 
@@ -128,6 +140,9 @@ class AnalysisService(object):
     def __send_request_wait(self, method, params, result_type):
         with self._lock:
             response = self.__send_request(method, params)
+            if 'id' not in response:
+                return {}
+
             result_id = response['id']
             results = []
             while True:
@@ -153,11 +168,32 @@ class AnalysisService(object):
                 response = json.loads(line)
                 if ('id' in response) and (response['id'] == request_id):
                     if 'error' in response:
-                        raise Exception(response['error'])
+                        #raise Exception(response['error'])
+                        return {}
                     elif 'result' in response:
                         return response['result']
                     else:
                         return None
+
+    def is_analyzed(self, filename):
+        """
+        Test if a file is part of the analyzed roots
+        """
+        directory = os.path.dirname(filename)
+        while (not os.path.exists(os.path.join(directory, 'pubspec.yaml'))
+               and directory != '' and directory != '/'):
+            directory = os.path.dirname(directory)
+
+        if directory == '' or directory == '/':
+            directory = os.path.dirname(filename)
+
+        if directory in self._roots:
+            return True
+
+        if filename in self._priority_files:
+            return True
+
+        return False
 
     def add_analysis_roots(self, filenames):
         """
@@ -295,3 +331,16 @@ class AnalysisService(object):
                 'offset': offset
             },
             'completion.results')
+
+    def reanalyze(self, filename):
+        """
+        Force the re-analysis of everything contained in the specified analysis
+        roots. This will cause all previously computed analysis results to be
+        discarded and recomputed, and will cause all subscribed notifications
+        to be re-sent.
+        """
+        return self.__send_request(
+            'analysis.reanalyze',
+            {
+                'roots': [filename]
+            })
