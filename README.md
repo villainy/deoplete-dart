@@ -28,5 +28,5 @@ Recommended installation with the plugin manager of your choice.
 ```vim
 " vim-plug
 Plug 'Shougo/deoplete.nvim'
-Plug 'villainy/deoplete-dart', { 'do': 'make'}
+Plug 'villainy/deoplete-dart', { 'for': 'dart' }
 ```
