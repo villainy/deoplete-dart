@@ -78,19 +78,25 @@ class Source(Base):
 
         candidates = []
         for suggest in suggestions:
-            doc_summary = ''
-            if 'docSummary' in suggest:
-                doc_summary = suggest['docSummary']
-            kind = ''
-            if 'element' in suggest and 'kind' in suggest['element']:
-                kind = suggest['element']['kind']
-            elif 'kind' in suggest:
-                kind = suggest['kind']
-
             candidate = dict(word=suggest['completion'],
-                             kind=kind,
-                             info=doc_summary,
                              dup=1)
+
+            candidate['info'] = suggest['completion']
+
+            if 'element' in suggest:
+                element = suggest['element']
+
+                if 'returnType' in element:
+                    candidate['info'] = element['returnType'] + ' ' + candidate['info']
+                if 'parameters' in element:
+                    candidate['info'] += element['parameters']
+
+                if 'kind' in element:
+                    candidate['kind'] = element['kind']
+
+            if 'docSummary' in suggest:
+                candidate['info'] += '\n' + suggest['docSummary']
+
 
             candidates.append(candidate)
 
@@ -102,7 +108,7 @@ class Source(Base):
         """
         current_file = os.path.join(context['cwd'], context['bufname'])
         if self._server.is_analyzed(current_file):
-            self._server.reanalyze(current_file)
+            self._server.update_file_content(current_file, '\n'.join(self.vim.current.buffer[:]))
         else:
             self._server.add_analysis_roots([current_file])
         return
