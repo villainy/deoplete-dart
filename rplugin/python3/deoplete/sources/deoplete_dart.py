@@ -120,7 +120,7 @@ class AnalysisService(object):
     """
 
     def __init__(self, dart_bin, analysis_server_path, flags_string):
-        flags = [] if not flags_string else flags_string.split(' ')
+        flags = flags_string.split(' ') if flags_string else []
         cmd = [dart_bin, analysis_server_path] + flags
         self._request_id = 0
         self._lock = threading.RLock()
@@ -196,7 +196,7 @@ class AnalysisService(object):
                and directory != '' and directory != '/'):
             directory = os.path.dirname(directory)
 
-        if directory == '' or directory == '/':
+        if directory in ['', '/']:
             directory = os.path.dirname(filename)
 
         if directory in self._roots:
@@ -217,7 +217,7 @@ class AnalysisService(object):
                    and directory != '' and directory != '/'):
                 directory = os.path.dirname(directory)
 
-            if directory == '' or directory == '/':
+            if directory in ['', '/']:
                 directory = os.path.dirname(filename)
 
             if directory not in self._roots:
